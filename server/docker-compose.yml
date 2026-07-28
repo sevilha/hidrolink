@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  # Broker MQTT (Mosquitto)
+  mosquitto:
+    image: eclipse-mosquitto:latest
+    container_name: hidrolink-mosquitto
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ./mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/log:/mosquitto/log
+    restart: unless-stopped
+
+  # Banco de Dados (PostgreSQL)
+  postgres:
+    image: postgres:15-alpine
+    container_name: hidrolink-db
+    environment:
+      POSTGRES_USER: hidrolink_user
+      POSTGRES_PASSWORD: hidrolink_password
+      POSTGRES_DB: hidrolink_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  # Painel Web (Dashboard)
+  dashboard:
+    build:
+      context: ../web_dashboard
+      dockerfile: Dockerfile
+    container_name: hidrolink-dashboard
+    ports:
+      - "5173:80"  # O Nginx rodará na 80 internamente, mas será exposto na 5173
+    restart: unless-stopped
+    depends_on:
+      - mosquitto
+
+volumes:
+  postgres_data:
