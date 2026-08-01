@@ -21,6 +21,11 @@
 #define NIVEL_DESLIGAR_PCT 95.0 // Desliga a bomba quando o nível for >= 95%
 
 // ------------------------------------------------------------
+//  2.1. MOCK DE DADOS (Para testes sem sensor físico)
+// ------------------------------------------------------------
+#define MODO_MOCK true // Mude para false quando for usar o sensor real
+
+// ------------------------------------------------------------
 //  3. Mecanismos de Proteção e Segurança (Safety Engine)
 // ------------------------------------------------------------
 #define TIMEOUT_LORA_DESLIGA_MS                                                \

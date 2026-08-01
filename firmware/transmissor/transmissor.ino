@@ -7,13 +7,13 @@
  */
 
 #include "config.h"
-#include <SPI.h>
-#include <LoRa.h>
-#include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
-#include <WiFi.h>
+#include <LoRa.h>
 #include <PubSubClient.h>
+#include <SPI.h>
+#include <WiFi.h>
+#include <Wire.h>
 
 Adafruit_SSD1306 display(128, 64, &Wire, OLED_RST);
 uint32_t contadorPacotes = 0;
@@ -27,16 +27,19 @@ unsigned long lastSendTime = 0;
 int modo_manual = 0;
 
 // Callback para mensagens recebidas do MQTT
-void mqttCallback(char* topic, byte* payload, unsigned int length) {
+void mqttCallback(char *topic, byte *payload, unsigned int length) {
   String msg = "";
   for (int i = 0; i < length; i++) {
     msg += (char)payload[i];
   }
-  
+
   if (String(topic) == "hidrolink/comando") {
-    if (msg == "AUTO") modo_manual = 0;
-    else if (msg == "ON") modo_manual = 1;
-    else if (msg == "OFF") modo_manual = 2;
+    if (msg == "AUTO")
+      modo_manual = 0;
+    else if (msg == "ON")
+      modo_manual = 1;
+    else if (msg == "OFF")
+      modo_manual = 2;
     Serial.println("[MQTT] Comando recebido: " + msg);
   }
 }
@@ -45,6 +48,21 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 //  Leitura filtrada do sensor ultrassônico JSN-SR04T (Mediana de 3)
 // ------------------------------------------------------------
 float lerDistanciaCM() {
+#if MODO_MOCK
+  // Simula o nível da água enchendo e esvaziando
+  static float mockDist = TANQUE_ALTURA_CM; // Começa vazia
+  static float step = -5.0; // Desce 5cm por leitura (caixa enchendo)
+
+  mockDist += step;
+  if (mockDist <= TANQUE_DIST_MIN_CM) {
+    mockDist = TANQUE_DIST_MIN_CM;
+    step = 2.0; // Começa a esvaziar mais devagar
+  } else if (mockDist >= TANQUE_ALTURA_CM) {
+    mockDist = TANQUE_ALTURA_CM;
+    step = -5.0; // Começa a encher
+  }
+  return mockDist;
+#else
   float leituras[3];
   for (int i = 0; i < 3; i++) {
     digitalWrite(PINO_TRIG, LOW);
@@ -70,22 +88,29 @@ float lerDistanciaCM() {
   }
 
   return leituras[1];
+#endif
 }
 
 // ------------------------------------------------------------
 //  Leitura da Tensão da Bateria 18650 (Divisor interno pino 35)
 // ------------------------------------------------------------
 float lerBateriaV() {
+#if MODO_MOCK
+  // Bateria fixa em 4.0V
+  return 4.0;
+#else
   int leitura = analogRead(PINO_BAT_ADC);
   // Fator de ajuste para divisor de tensão de 100K/100K da placa TTGO
   float tensao = (leitura / 4095.0) * 2.0 * 3.3 * 1.1;
   return tensao;
+#endif
 }
 
 // ------------------------------------------------------------
 //  Atualização de Display OLED Local no Transmissor
 // ------------------------------------------------------------
-void atualizarOLED(float distancia, float nivelPct, float litros, bool erroSensor) {
+void atualizarOLED(float distancia, float nivelPct, float litros,
+                   bool erroSensor) {
   display.clearDisplay();
   display.setTextColor(SSD1306_WHITE);
 
@@ -137,7 +162,7 @@ void setupWiFi() {
     Serial.print(".");
     tentativas++;
   }
-  
+
   if (WiFi.status() == WL_CONNECTED) {
     Serial.println("\n[WiFi] Conectado!");
     Serial.print("[WiFi] IP: ");
@@ -148,8 +173,9 @@ void setupWiFi() {
 }
 
 void reconnectMQTT() {
-  if (WiFi.status() != WL_CONNECTED) return;
-  
+  if (WiFi.status() != WL_CONNECTED)
+    return;
+
   // Tenta reconectar (não bloqueante para não travar o LoRa)
   if (!mqttClient.connected()) {
     Serial.print("[MQTT] Tentando conexao com broker... ");
@@ -174,7 +200,8 @@ void setup() {
   // Inicialização do Display OLED
   if (OLED_RST > 0) {
     pinMode(OLED_RST, OUTPUT);
-    digitalWrite(OLED_RST, LOW); delay(20);
+    digitalWrite(OLED_RST, LOW);
+    delay(20);
     digitalWrite(OLED_RST, HIGH);
   }
   Wire.begin(OLED_SDA, OLED_SCL);
@@ -191,13 +218,14 @@ void setup() {
     display.setCursor(0, 20);
     display.println("Falha LoRa!");
     display.display();
-    while (1) delay(1000);
+    while (1)
+      delay(1000);
   }
 
   LoRa.setSyncWord(LORA_SYNC_WORD);
-  LoRa.setSpreadingFactor(9);     // Equilíbrio alcance vs consumo
+  LoRa.setSpreadingFactor(9); // Equilíbrio alcance vs consumo
   LoRa.setSignalBandwidth(125E3);
-  LoRa.setTxPower(20);            // 20 dBm (Potência Máxima)
+  LoRa.setTxPower(20); // 20 dBm (Potência Máxima)
 
   setupWiFi();
   mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
@@ -215,12 +243,14 @@ void loop() {
   }
 
   unsigned long currentMillis = millis();
-  
-  if (currentMillis - lastSendTime >= INTERVALO_ENVIO_TX_MS || lastSendTime == 0) {
+
+  if (currentMillis - lastSendTime >= INTERVALO_ENVIO_TX_MS ||
+      lastSendTime == 0) {
     lastSendTime = currentMillis;
 
     float distancia = lerDistanciaCM();
-    bool erroSensor = (distancia < 0.0 || distancia > (TANQUE_ALTURA_CM + 50.0));
+    bool erroSensor =
+        (distancia < 0.0 || distancia > (TANQUE_ALTURA_CM + 50.0));
 
     float nivelPct = 0.0;
     float litros = 0.0;
@@ -235,14 +265,12 @@ void loop() {
     float bateria = lerBateriaV();
     contadorPacotes++;
 
-    // Formato do pacote telemetry CSV: "distancia,nivel,litros,bateria,contador,erro,modo_manual"
-    String pacote = String(distancia, 1) + "," +
-                    String(nivelPct, 1) + "," +
-                    String(litros, 0) + "," +
-                    String(bateria, 2) + "," +
-                    String(contadorPacotes) + "," +
-                    String(erroSensor ? 1 : 0) + "," +
-                    String(modo_manual);
+    // Formato do pacote telemetry CSV:
+    // "distancia,nivel,litros,bateria,contador,erro,modo_manual"
+    String pacote = String(distancia, 1) + "," + String(nivelPct, 1) + "," +
+                    String(litros, 0) + "," + String(bateria, 2) + "," +
+                    String(contadorPacotes) + "," + String(erroSensor ? 1 : 0) +
+                    "," + String(modo_manual);
 
     // Envio via LoRa (Para o Receptor na bomba)
     LoRa.beginPacket();
@@ -253,12 +281,12 @@ void loop() {
     // Envio via MQTT (Para o Orange Pi NestJS) se conectado
     if (mqttClient.connected()) {
       // Para o MQTT, enviaremos um JSON estruturado
-      String payloadMQTT = "{\"distancia\":" + String(distancia, 1) + 
-                           ",\"nivel\":" + String(nivelPct, 1) + 
-                           ",\"litros\":" + String(litros, 0) + 
-                           ",\"bateria\":" + String(bateria, 2) + 
-                           ",\"erro\":" + String(erroSensor ? "true" : "false") + "}";
-                           
+      String payloadMQTT = "{\"distancia\":" + String(distancia, 1) +
+                           ",\"nivel\":" + String(nivelPct, 1) +
+                           ",\"litros\":" + String(litros, 0) +
+                           ",\"bateria\":" + String(bateria, 2) + ",\"erro\":" +
+                           String(erroSensor ? "true" : "false") + "}";
+
       if (mqttClient.publish(MQTT_TOPIC_TELEMETRY, payloadMQTT.c_str())) {
         Serial.println("[MQTT] Telemetria publicada.");
       } else {
