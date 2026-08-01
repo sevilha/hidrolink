@@ -30,12 +30,13 @@ services:
 
   # Painel Web (Dashboard)
   dashboard:
-    build:
-      context: ../web_dashboard
-      dockerfile: Dockerfile
+    image: nginx:alpine
     container_name: hidrolink-dashboard
     ports:
       - "5173:80"  # O Nginx rodará na 80 internamente, mas será exposto na 5173
+    volumes:
+      - ../web_dashboard/dist:/usr/share/nginx/html
+      - ../web_dashboard/nginx.conf:/etc/nginx/conf.d/default.conf
     restart: unless-stopped
     depends_on:
       - mosquitto
