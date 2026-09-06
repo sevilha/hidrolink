@@ -300,30 +300,42 @@ void setup() {
   pinMode(PINO_RELE_BOMBA, OUTPUT);
   acionarRele(false); // Garante bomba desligada ao ligar o ESP32
 
-  // Inicializa OLED
-  pinMode(OLED_RST, OUTPUT);
-  digitalWrite(OLED_RST, LOW);
-  delay(20);
-  digitalWrite(OLED_RST, HIGH);
+  // Inicialização do Display OLED (Igual ao Transmissor)
+  if (OLED_RST > 0) {
+    pinMode(OLED_RST, OUTPUT);
+    digitalWrite(OLED_RST, LOW);
+    delay(20);
+    digitalWrite(OLED_RST, HIGH);
+  }
   Wire.begin(OLED_SDA, OLED_SCL);
-  display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
-  display.clearDisplay();
-  display.setCursor(0, 20);
-  display.println("Iniciando Hidrolink...");
-  display.display();
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Serial.println("[ERRO] Falha ao inicializar o Display OLED SSD1306!");
+  } else {
+    Serial.println("[OLED] Display OLED iniciado com sucesso.");
+    display.clearDisplay();
+    display.setTextColor(SSD1306_WHITE);
+    display.setTextSize(1);
+    display.setCursor(0, 20);
+    display.println("Iniciando Receptor...");
+    display.display();
+  }
 
-  // Inicializa LoRa
+  // Inicialização do Rádio LoRa (Igual ao Transmissor)
   SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_CS);
   LoRa.setPins(LORA_CS, LORA_RST, LORA_DIO0);
 
   if (!LoRa.begin(LORA_FREQUENCIA)) {
-    Serial.println("[ERRO] Falha ao iniciar modem LoRa!");
+    Serial.println("[ERRO] Falha ao inicializar modem LoRa!");
     display.clearDisplay();
+    display.setTextColor(SSD1306_WHITE);
+    display.setTextSize(1);
     display.setCursor(0, 20);
     display.println("Falha LoRa!");
     display.display();
-    while (1)
-      delay(1000);
+    while (1) {
+      Serial.println("[LORA] Travado: Modem LoRa nao respondeu. Verifique pinos SPI/RST/CS.");
+      delay(2000);
+    }
   }
 
   LoRa.setSyncWord(LORA_SYNC_WORD);
@@ -336,21 +348,27 @@ void setup() {
 void loop() {
   // Leitura de pacotes LoRa recebidos
   int tamanhoPacote = LoRa.parsePacket();
+  bool recebeuPacote = false;
   if (tamanhoPacote) {
     String pacote = "";
     while (LoRa.available()) {
       pacote += (char)LoRa.read();
     }
     processarPacote(pacote);
+    recebeuPacote = true;
   }
 
   // Executa máquina de automação da bomba
   executarControleBomba();
 
-  // Atualiza tela OLED
-  bool online = g_primeiroPacote &&
-                (millis() - g_ultimoPacoteMs < TIMEOUT_LORA_DESLIGA_MS);
-  atualizarTela(online);
+  // Atualiza tela OLED a cada 2 segundos OU se recebeu um pacote novo
+  static unsigned long ultimaAtualizacaoTela = 0;
+  if (recebeuPacote || millis() - ultimaAtualizacaoTela >= 2000) {
+    ultimaAtualizacaoTela = millis();
+    bool online = g_primeiroPacote &&
+                  (millis() - g_ultimoPacoteMs < TIMEOUT_LORA_DESLIGA_MS);
+    atualizarTela(online);
+  }
 
   delay(200);
 }

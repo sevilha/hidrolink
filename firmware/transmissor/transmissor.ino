@@ -48,7 +48,7 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
 //  Leitura filtrada do sensor ultrassônico JSN-SR04T (Mediana de 3)
 // ------------------------------------------------------------
 float lerDistanciaCM() {
-#if MODO_MOCK
+#if 1 // Forçando simulação do nível da água
   // Simula o nível da água enchendo e esvaziando
   static float mockDist = TANQUE_ALTURA_CM; // Começa vazia
   static float step = -5.0; // Desce 5cm por leitura (caixa enchendo)
@@ -95,7 +95,7 @@ float lerDistanciaCM() {
 //  Leitura da Tensão da Bateria 18650 (Divisor interno pino 35)
 // ------------------------------------------------------------
 float lerBateriaV() {
-#if MODO_MOCK
+#if 0 // Usando leitura real da bateria
   // Bateria fixa em 4.0V
   return 4.0;
 #else
@@ -205,9 +205,17 @@ void setup() {
     digitalWrite(OLED_RST, HIGH);
   }
   Wire.begin(OLED_SDA, OLED_SCL);
-  display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
-  display.clearDisplay();
-  display.display();
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Serial.println("[ERRO] Falha ao inicializar o Display OLED SSD1306!");
+  } else {
+    Serial.println("[OLED] Display OLED iniciado com sucesso.");
+    display.clearDisplay();
+    display.setTextColor(SSD1306_WHITE);
+    display.setTextSize(1);
+    display.setCursor(0, 20);
+    display.println("Iniciando Gateway...");
+    display.display();
+  }
 
   // Inicialização do Rádio LoRa
   SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_CS);
@@ -215,11 +223,16 @@ void setup() {
 
   if (!LoRa.begin(LORA_FREQUENCIA)) {
     Serial.println("[ERRO] Falha ao inicializar modem LoRa!");
+    display.clearDisplay();
+    display.setTextColor(SSD1306_WHITE);
+    display.setTextSize(1);
     display.setCursor(0, 20);
     display.println("Falha LoRa!");
     display.display();
-    while (1)
-      delay(1000);
+    while (1) {
+      Serial.println("[LORA] Travado: Modem LoRa nao respondeu. Verifique pinos SPI/RST/CS.");
+      delay(2000);
+    }
   }
 
   LoRa.setSyncWord(LORA_SYNC_WORD);

@@ -61,7 +61,7 @@
 #define PINO_BAT_ADC 35
 
 // Pinos de Acionamento da Bomba (No Receptor)
-#define PINO_RELE_BOMBA 17 // Saída para controle da bomba (Relé / Contatora)
+#define PINO_RELE_BOMBA 13 // Saída para controle da bomba (Relé / Contatora)
 #define RELE_LOGICA_INVERSA                                                    \
   false // Setar 'true' se o módulo relé acionar em LOW (lógica invertida comum
         // em módulos optoacoplados)
