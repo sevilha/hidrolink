@@ -12,6 +12,48 @@
 #include <LoRa.h>
 #include <SPI.h>
 #include <Wire.h>
+#include "mbedtls/aes.h"
+#include "mbedtls/base64.h"
+
+// Função Auxiliar de Descriptografia
+String decryptAES(String base64_input) {
+    size_t len = base64_input.length();
+    unsigned char decode_buf[len];
+    size_t decode_len = 0;
+    
+    int err = mbedtls_base64_decode(decode_buf, len, &decode_len, (const unsigned char*)base64_input.c_str(), len);
+    if (err != 0 || decode_len < 16) return "";
+
+    unsigned char iv[16];
+    memcpy(iv, decode_buf, 16);
+    
+    size_t cipher_len = decode_len - 16;
+    if (cipher_len % 16 != 0 || cipher_len == 0) return "";
+    
+    unsigned char cipher_buf[cipher_len];
+    memcpy(cipher_buf, decode_buf + 16, cipher_len);
+    
+    mbedtls_aes_context aes;
+    mbedtls_aes_init(&aes);
+    mbedtls_aes_setkey_dec(&aes, (const unsigned char*)LORA_AES_KEY, 128);
+    
+    unsigned char output[cipher_len];
+    mbedtls_aes_crypt_cbc(&aes, MBEDTLS_AES_DECRYPT, cipher_len, iv, cipher_buf, output);
+    mbedtls_aes_free(&aes);
+    
+    int pad = output[cipher_len - 1];
+    if (pad > 0 && pad <= 16) {
+        cipher_len -= pad;
+    } else {
+        return ""; // Padding inválido
+    }
+    
+    char final_str[cipher_len + 1];
+    memcpy(final_str, output, cipher_len);
+    final_str[cipher_len] = '\0';
+    
+    return String(final_str);
+}
 
 Adafruit_SSD1306 display(128, 64, &Wire, OLED_RST);
 
@@ -146,7 +188,13 @@ void atualizarTela(bool online) {
 // ------------------------------------------------------------
 //  Processamento do Pacote Telemetria Recebido via LoRa
 // ------------------------------------------------------------
-void processarPacote(String pacote) {
+void processarPacote(String pacoteBase64) {
+  String pacote = decryptAES(pacoteBase64);
+  if (pacote == "") {
+      Serial.println("[SEGURANÇA] Pacote rejeitado! (Falha na descriptografia / Chave incorreta)");
+      return;
+  }
+
   // Formato retornado pelo TX: "distancia,nivel,litros,bateria,contador,erro,modo_manual"
   int idx[6];
   int pos = 0, campo = 0;
@@ -158,11 +206,19 @@ void processarPacote(String pacote) {
   if (campo < 6)
     return; // Pacote malformado
 
+  uint32_t novo_contador = pacote.substring(idx[3] + 1, idx[4]).toInt();
+
+  // 1. CHECAGEM DE SEGURANÇA ANTI-REPLAY
+  if (g_primeiroPacote && novo_contador <= g_contador) {
+      Serial.printf("[SEGURANÇA] Pacote rejeitado! Contador antigo (%d <= %d). Possível ataque Replay!\n", novo_contador, g_contador);
+      return;
+  }
+  g_contador = novo_contador;
+
   g_distancia = pacote.substring(0, idx[0]).toFloat();
   g_nivelPct = pacote.substring(idx[0] + 1, idx[1]).toFloat();
   g_litros = pacote.substring(idx[1] + 1, idx[2]).toFloat();
   g_bateria = pacote.substring(idx[2] + 1, idx[3]).toFloat();
-  g_contador = pacote.substring(idx[3] + 1, idx[4]).toInt();
   g_erroSensor = pacote.substring(idx[4] + 1, idx[5]).toInt() == 1;
   g_modoManual = pacote.substring(idx[5] + 1).toInt();
 
