@@ -48,7 +48,7 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
 //  Leitura filtrada do sensor ultrassônico JSN-SR04T (Mediana de 3)
 // ------------------------------------------------------------
 float lerDistanciaCM() {
-#if 1 // Forçando simulação do nível da água
+#if MODO_MOCK // Forçando simulação do nível da água
   // Simula o nível da água enchendo e esvaziando
   static float mockDist = TANQUE_ALTURA_CM; // Começa vazia
   static float step = -5.0; // Desce 5cm por leitura (caixa enchendo)
@@ -73,6 +73,11 @@ float lerDistanciaCM() {
 
     long duracao = pulseIn(PINO_ECHO, HIGH, 30000UL); // Timeout de 30ms (~5m)
     leituras[i] = (duracao == 0) ? -1.0 : (duracao * 0.0343) / 2.0;
+    
+    Serial.print("[Sensor] Leitura "); Serial.print(i);
+    Serial.print(": duracao="); Serial.print(duracao);
+    Serial.print(" us -> dist="); Serial.print(leituras[i]); Serial.println(" cm");
+    
     delay(60);
   }
 

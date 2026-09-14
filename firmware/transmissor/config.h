@@ -23,7 +23,7 @@
 // ------------------------------------------------------------
 //  2.1. MOCK DE DADOS (Para testes sem sensor físico)
 // ------------------------------------------------------------
-#define MODO_MOCK true // Mude para false quando for usar o sensor real
+#define MODO_MOCK false // Usando sensor real
 
 // ------------------------------------------------------------
 //  3. Mecanismos de Proteção e Segurança (Safety Engine)
@@ -62,7 +62,7 @@
 
 // Pinos do Sensor Ultrassônico e Bateria (No Transmissor)
 #define PINO_TRIG 25
-#define PINO_ECHO 33
+#define PINO_ECHO 34
 #define PINO_BAT_ADC 35
 
 // Pinos de Acionamento da Bomba (No Receptor)

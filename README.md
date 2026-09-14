@@ -112,3 +112,13 @@ As variáveis críticas de calibração do reservatório e credenciais de rede f
    
 2. **Transmissor não conecta no MQTT / Falhas de envio:**
    O Transmissor e o Orange Pi devem pertencer à mesma rede ou as VLANs devem possuir rotas liberadas na porta 1883. Certifique-se de que o sinal Wi-Fi alcança fisicamente o topo do reservatório onde o transmissor está instalado. O rádio LoRa continuará trabalhando independentemente e de forma prioritária caso o Wi-Fi caia.
+
+3. **Como testar/verificar as mensagens MQTT (Mosquitto):**
+   Para verificar se as mensagens de telemetria estão chegando no servidor local, você pode se inscrever no tópico usando o terminal. Se possuir o cliente instalado nativamente, use:
+   ```bash
+   mosquitto_sub -h localhost -t "hidrolink/#" -v
+   ```
+   Caso o Mosquitto esteja rodando no Docker e você não tenha o cliente instalado no host, rode o comando diretamente dentro do container:
+   ```bash
+   docker exec -it <NOME_DO_CONTAINER> mosquitto_sub -h localhost -t "hidrolink/#" -v
+   ```
