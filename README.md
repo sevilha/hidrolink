@@ -11,6 +11,7 @@ O **Hidrolink** é um sistema embarcado avançado de automação para controle i
 - 📱 **Web Dashboard Premium**: Interface React moderna e animada, servida localmente para monitorar o sistema em tempo real por qualquer celular ou tablet.
 - 🔔 **Notificações Push (Opcionais)**: Capacidade da API local disparar webhooks de saída (ex: para o ntfy.sh ou Telegram) alertando o celular sobre falhas críticas (caixa vazia, vazamento), desde que o roteador permita tráfego de saída. Em modo totalmente offline, o sistema falha o envio do webhook de forma silenciosa e continua operando a bomba normalmente.
 - ⚡ **Automação Inteligente por Histerese**: Acionamento automático da bomba quando o nível cai abaixo de 25% e desligamento em 95%.
+- 🔐 **Segurança de Ponta a Ponta**: A comunicação via rádio LoRa é fortemente criptografada com AES-128-CBC e possui validação Anti-Replay. A conexão MQTT também conta com autenticação restrita por usuário e senha.
 - 🛡️ **Tripla Proteção da Bomba (Safety Engine)**:
   1. Proteção de Perda de Sinal (Offline): Desliga a bomba se o transmissor ficar > 45s sem enviar pacotes.
   2. Proteção contra Poço Seco / Vazamento: Limite de tempo máximo contínuo da bomba ligada (30 min).
@@ -59,7 +60,7 @@ O projeto conta com um ambiente Docker pré-configurado na pasta `server/`.
    cd server
    docker compose up -d
    ```
-Isso iniciará o broker **Eclipse Mosquitto** (permitindo conexão anônima na porta **1883** para o ESP32 e na porta **9001** via WebSockets para o Web Dashboard).
+Isso iniciará o broker **Eclipse Mosquitto**. Importante: o sistema de segurança agora **bloqueia conexões anônimas**. Você precisará configurar o Mosquitto no Orange Pi para aceitar as credenciais padrão usando o utilitário `mosquitto_passwd` (ex: Usuário `admin`, Senha `hidrolink_mqtt_pass`).
 
 ---
 
@@ -73,18 +74,17 @@ Para iniciar tudo em produção:
 
 ---
 
-## ⚙️ Configuração e Calibração (`config.h`)
+## ⚙️ Configuração, Senhas e Calibração (`config.h` e `secrets.h`)
 
-As variáveis críticas de calibração do reservatório e credenciais de rede ficam nos arquivos `config.h`. 
+As variáveis físicas e calibração do reservatório ficam nos arquivos `config.h`. Já as credenciais e chaves criptográficas ficam no arquivo `secrets.h`.
 
-**Para o Transmissor (`firmware/transmissor/config.h`)**, você deve configurar o IP do servidor local e a rede IoT:
-```cpp
-#define WIFI_SSID           "Sua_Rede_IoT"
-#define WIFI_PASSWORD       "Sua_Senha_IoT"
-#define MQTT_SERVER         "192.168.1.100"  // IP Estático do Orange Pi
-#define MQTT_PORT           1883
-#define MQTT_TOPIC_TELEMETRY "hidrolink/telemetria"
-```
+1. **No Transmissor (`firmware/transmissor/secrets.h`)**, configure:
+   - Suas credenciais de Wi-Fi (`WIFI_SSID` e `WIFI_PASSWORD`).
+   - O IP do seu servidor local e as credenciais do MQTT (`MQTT_USER` e `MQTT_PASSWORD`).
+   - A `LORA_AES_KEY` (uma senha de **exatos 16 caracteres**).
+
+2. **No Receptor (`firmware/receptor/secrets.h`)**, configure:
+   - Você precisará criar ou editar este arquivo e inserir a **mesma** `LORA_AES_KEY` do transmissor para que a placa da bomba consiga decifrar os pacotes de rádio.
 
 ---
 
