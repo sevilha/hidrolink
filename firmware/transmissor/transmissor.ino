@@ -52,6 +52,46 @@ String encryptAES(String plaintext) {
     return String((char*)base64_out);
 }
 
+// Função Auxiliar de Descriptografia (Para receber o ACK)
+String decryptAES(String base64_input) {
+    size_t len = base64_input.length();
+    unsigned char decode_buf[len];
+    size_t decode_len = 0;
+    
+    int err = mbedtls_base64_decode(decode_buf, len, &decode_len, (const unsigned char*)base64_input.c_str(), len);
+    if (err != 0 || decode_len < 16) return "";
+
+    unsigned char iv[16];
+    memcpy(iv, decode_buf, 16);
+    
+    size_t cipher_len = decode_len - 16;
+    if (cipher_len % 16 != 0 || cipher_len == 0) return "";
+    
+    unsigned char cipher_buf[cipher_len];
+    memcpy(cipher_buf, decode_buf + 16, cipher_len);
+    
+    mbedtls_aes_context aes;
+    mbedtls_aes_init(&aes);
+    mbedtls_aes_setkey_dec(&aes, (const unsigned char*)LORA_AES_KEY, 128);
+    
+    unsigned char output[cipher_len];
+    mbedtls_aes_crypt_cbc(&aes, MBEDTLS_AES_DECRYPT, cipher_len, iv, cipher_buf, output);
+    mbedtls_aes_free(&aes);
+    
+    int pad = output[cipher_len - 1];
+    if (pad > 0 && pad <= 16) {
+        cipher_len -= pad;
+    } else {
+        return ""; // Padding inválido
+    }
+    
+    char final_str[cipher_len + 1];
+    memcpy(final_str, output, cipher_len);
+    final_str[cipher_len] = '\0';
+    
+    return String(final_str);
+}
+
 Adafruit_SSD1306 display(128, 64, &Wire, OLED_RST);
 uint32_t contadorPacotes = 0;
 
@@ -188,6 +228,18 @@ void atualizarOLED(float distancia, float nivelPct, float litros,
   display.print(contadorPacotes);
 
   display.display();
+}
+
+void atualizarOLEDStatusLoRa(bool loraOffline) {
+  if (loraOffline) {
+    display.fillRect(0, 48, 128, 16, SSD1306_BLACK); // Apaga a parte inferior
+    display.setTextSize(1);
+    display.setCursor(0, 48);
+    display.println("[ERRO] LORA OFFLINE");
+    display.setCursor(0, 56);
+    display.println("Receptor nao responde");
+    display.display();
+  }
 }
 
 void setupWiFi() {
@@ -335,6 +387,30 @@ void loop() {
     Serial.println("[TX Envio #" + String(contadorPacotes) + "]: " + pacote);
     Serial.println(" -> Criptografado: " + pacoteCriptografado);
 
+    // Espera pelo ACK
+    unsigned long tempoEspera = millis();
+    bool loraOffline = true;
+    while (millis() - tempoEspera < 2000) {
+      int packetSize = LoRa.parsePacket();
+      if (packetSize) {
+        String msg = "";
+        while (LoRa.available()) {
+          msg += (char)LoRa.read();
+        }
+        String dec = decryptAES(msg);
+        if (dec == "ACK") {
+          loraOffline = false;
+          Serial.println("[TX] ACK recebido do RX com sucesso.");
+          break;
+        }
+      }
+      delay(10);
+    }
+
+    if (loraOffline) {
+      Serial.println("[TX ERRO] ACK não recebido. Receptor offline ou fora de alcance.");
+    }
+
     // Envio via MQTT (Para o Orange Pi NestJS) se conectado
     if (mqttClient.connected()) {
       // Para o MQTT, enviaremos um JSON estruturado
@@ -342,7 +418,8 @@ void loop() {
                            ",\"nivel\":" + String(nivelPct, 1) +
                            ",\"litros\":" + String(litros, 0) +
                            ",\"bateria\":" + String(bateria, 2) + ",\"erro\":" +
-                           String(erroSensor ? "true" : "false") + "}";
+                           String(erroSensor ? "true" : "false") + ",\"lora_offline\":" +
+                           String(loraOffline ? "true" : "false") + "}";
 
       if (mqttClient.publish(MQTT_TOPIC_TELEMETRY, payloadMQTT.c_str())) {
         Serial.println("[MQTT] Telemetria publicada.");
@@ -352,5 +429,8 @@ void loop() {
     }
 
     atualizarOLED(distancia, nivelPct, litros, erroSensor);
+    if (loraOffline) {
+      atualizarOLEDStatusLoRa(true);
+    }
   }
 }

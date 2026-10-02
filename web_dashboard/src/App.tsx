@@ -9,6 +9,7 @@ interface Telemetry {
   litros: number;
   bateria: number;
   erro: boolean;
+  loraOffline: boolean;
 }
 
 function App() {
@@ -17,7 +18,8 @@ function App() {
     nivel: 0,
     litros: 0,
     bateria: 0.0,
-    erro: false
+    erro: false,
+    loraOffline: false
   });
   
   const [client, setClient] = useState<mqtt.MqttClient | null>(null);
@@ -47,7 +49,8 @@ function App() {
             nivel: data.nivel || 0,
             litros: data.litros || 0,
             bateria: data.bateria || 0,
-            erro: data.erro === 'true' || data.erro === true
+            erro: data.erro === 'true' || data.erro === true,
+            loraOffline: data.lora_offline === 'true' || data.lora_offline === true
           });
         } catch (e) {
           console.error('Erro ao fazer parse da telemetria', e);
@@ -150,11 +153,19 @@ function App() {
             </div>
           </div>
 
-          {/* Alerta de Erro */}
+          {/* Alerta de Erro de Sensor */}
           {telemetry.erro && (
             <div className="mt-4 w-full bg-red-500/10 border border-red-500/30 rounded-xl p-4 flex items-center gap-3 text-red-400 animate-pulse">
               <ShieldAlert className="w-6 h-6" />
               <span className="font-semibold">Erro detectado no sensor ultrassônico!</span>
+            </div>
+          )}
+
+          {/* Alerta de Lora Offline */}
+          {telemetry.loraOffline && (
+            <div className="mt-4 w-full bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 flex items-center gap-3 text-amber-400 animate-pulse">
+              <ShieldAlert className="w-6 h-6" />
+              <span className="font-semibold">Perda de conexão LoRa com a Bomba!</span>
             </div>
           )}
         </div>

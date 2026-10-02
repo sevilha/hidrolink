@@ -55,6 +55,41 @@ String decryptAES(String base64_input) {
     return String(final_str);
 }
 
+// Função Auxiliar de Criptografia (Para enviar o ACK)
+String encryptAES(String plaintext) {
+    mbedtls_aes_context aes;
+    mbedtls_aes_init(&aes);
+    mbedtls_aes_setkey_enc(&aes, (const unsigned char*)LORA_AES_KEY, 128);
+
+    int len = plaintext.length();
+    int pad = 16 - (len % 16);
+    int padded_len = len + pad;
+    unsigned char input[padded_len];
+    memcpy(input, plaintext.c_str(), len);
+    for (int i = len; i < padded_len; i++) input[i] = (unsigned char)pad;
+
+    unsigned char iv[16];
+    for (int i = 0; i < 16; i++) iv[i] = random(0, 256);
+    unsigned char iv_copy[16];
+    memcpy(iv_copy, iv, 16);
+
+    unsigned char output[padded_len];
+    mbedtls_aes_crypt_cbc(&aes, MBEDTLS_AES_ENCRYPT, padded_len, iv, input, output);
+    mbedtls_aes_free(&aes);
+
+    int final_len = 16 + padded_len;
+    unsigned char final_output[final_len];
+    memcpy(final_output, iv_copy, 16);
+    memcpy(final_output + 16, output, padded_len);
+
+    size_t olen = 0;
+    mbedtls_base64_encode(NULL, 0, &olen, final_output, final_len);
+    unsigned char base64_out[olen];
+    mbedtls_base64_encode(base64_out, olen, &olen, final_output, final_len);
+
+    return String((char*)base64_out);
+}
+
 Adafruit_SSD1306 display(128, 64, &Wire, OLED_RST);
 
 // ------------------------------------------------------------
@@ -230,6 +265,13 @@ void processarPacote(String pacoteBase64) {
   Serial.printf(
       "[RX Recebido]: Dist=%.1fcm Nivel=%.1f%% Vol=%.0fL Bat=%.2fV RSSI=%d\n",
       g_distancia, g_nivelPct, g_litros, g_bateria, g_rssi);
+
+  // Envia ACK criptografado de volta para o transmissor
+  String ackCriptografado = encryptAES("ACK");
+  LoRa.beginPacket();
+  LoRa.print(ackCriptografado);
+  LoRa.endPacket();
+  Serial.println("[RX] ACK enviado ao TX.");
 }
 
 // ------------------------------------------------------------
