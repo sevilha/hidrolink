@@ -101,6 +101,8 @@ enum EstadoBomba {
   ALERTA_OFFLINE,
   ALERTA_ERRO_SENSOR,
   ALERTA_POCO_SECO,
+  ALERTA_BOIA,
+  ALERTA_ESTAGNADO,
   PAUSA_ANTI_CICLO
 };
 
@@ -114,6 +116,7 @@ float g_bateria = 0.0;
 uint32_t g_contador = 0;
 bool g_erroSensor = false;
 int g_modoManual = 0;
+bool g_boiaAcionada = false;
 int g_rssi = 0;
 float g_snr = 0.0;
 
@@ -121,6 +124,8 @@ float g_snr = 0.0;
 unsigned long g_ultimoPacoteMs = 0;
 unsigned long g_inicioBombaLigadaMs = 0;
 unsigned long g_ultimoDesligamentoMs = 0;
+float g_ultimoNivelRef = 0.0;
+unsigned long g_ultimoCheckVariacaoMs = 0;
 bool g_primeiroPacote = false;
 bool g_bombaRelatadaOn = false;
 
@@ -194,6 +199,12 @@ void atualizarTela(bool online) {
   case ALERTA_POCO_SECO:
     display.println("[! TIMEOUT !]");
     break;
+  case ALERTA_BOIA:
+    display.println("[! BOIA !]");
+    break;
+  case ALERTA_ESTAGNADO:
+    display.println("[! ESTAGNADO !]");
+    break;
   }
 
   // Nível e Volume
@@ -220,6 +231,9 @@ void atualizarTela(bool online) {
   display.display();
 }
 
+// Protótipo de controle da bomba
+void executarControleBomba();
+
 // ------------------------------------------------------------
 //  Processamento do Pacote Telemetria Recebido via LoRa
 // ------------------------------------------------------------
@@ -230,15 +244,15 @@ void processarPacote(String pacoteBase64) {
       return;
   }
 
-  // Formato retornado pelo TX: "distancia,nivel,litros,bateria,contador,erro,modo_manual"
-  int idx[6];
+  // Formato TX: "distancia,nivel,litros,bateria,contador,erro,modo_manual,boia,reset"
+  int idx[8];
   int pos = 0, campo = 0;
-  for (int i = 0; i < pacote.length() && campo < 6; i++) {
+  for (int i = 0; i < pacote.length() && campo < 8; i++) {
     if (pacote[i] == ',') {
       idx[campo++] = i;
     }
   }
-  if (campo < 6)
+  if (campo < 8)
     return; // Pacote malformado
 
   uint32_t novo_contador = pacote.substring(idx[3] + 1, idx[4]).toInt();
@@ -255,7 +269,9 @@ void processarPacote(String pacoteBase64) {
   g_litros = pacote.substring(idx[1] + 1, idx[2]).toFloat();
   g_bateria = pacote.substring(idx[2] + 1, idx[3]).toFloat();
   g_erroSensor = pacote.substring(idx[4] + 1, idx[5]).toInt() == 1;
-  g_modoManual = pacote.substring(idx[5] + 1).toInt();
+  g_modoManual = pacote.substring(idx[5] + 1, idx[6]).toInt();
+  g_boiaAcionada = pacote.substring(idx[6] + 1, idx[7]).toInt() == 1;
+  bool comandoReset = pacote.substring(idx[7] + 1).toInt() == 1;
 
   g_rssi = LoRa.packetRssi();
   g_snr = LoRa.packetSnr();
@@ -263,15 +279,36 @@ void processarPacote(String pacoteBase64) {
   g_primeiroPacote = true;
 
   Serial.printf(
-      "[RX Recebido]: Dist=%.1fcm Nivel=%.1f%% Vol=%.0fL Bat=%.2fV RSSI=%d\n",
-      g_distancia, g_nivelPct, g_litros, g_bateria, g_rssi);
+      "[RX Recebido]: Dist=%.1fcm Nivel=%.1f%% Vol=%.0fL Bat=%.2fV Boia=%d Reset=%d RSSI=%d\n",
+      g_distancia, g_nivelPct, g_litros, g_bateria, g_boiaAcionada ? 1 : 0, comandoReset ? 1 : 0, g_rssi);
 
-  // Envia ACK criptografado de volta para o transmissor
-  String ackCriptografado = encryptAES("ACK");
+  // Tratamento do comando de RESET enviado pelo Dashboard/TX
+  if (comandoReset) {
+    if (g_estadoBomba == ALERTA_BOIA || g_estadoBomba == ALERTA_ESTAGNADO ||
+        g_estadoBomba == ALERTA_POCO_SECO) {
+      g_estadoBomba = BOMBA_DESLIGADA;
+      Serial.println("[RESET] Trava de alerta liberada com sucesso via Dashboard!");
+    }
+  }
+
+  // Executa controle de bomba antes de responder o ACK para devolver o estado real
+  executarControleBomba();
+
+  // Monta código do alerta para o TX
+  String codAlerta = "OK";
+  if (g_estadoBomba == ALERTA_BOIA) codAlerta = "BOIA";
+  else if (g_estadoBomba == ALERTA_ESTAGNADO) codAlerta = "ESTAGNADO";
+  else if (g_estadoBomba == ALERTA_POCO_SECO) codAlerta = "TIMEOUT";
+  else if (g_estadoBomba == ALERTA_ERRO_SENSOR) codAlerta = "SENSOR";
+  else if (g_estadoBomba == ALERTA_OFFLINE) codAlerta = "OFFLINE";
+
+  // Envia ACK criptografado de volta para o transmissor ("ACK,<bomba 0/1>,<alerta>")
+  String ackPayload = "ACK," + String(g_bombaRelatadaOn ? 1 : 0) + "," + codAlerta;
+  String ackCriptografado = encryptAES(ackPayload);
   LoRa.beginPacket();
   LoRa.print(ackCriptografado);
   LoRa.endPacket();
-  Serial.println("[RX] ACK enviado ao TX.");
+  Serial.println("[RX] ACK enviado ao TX: " + ackPayload);
 }
 
 // ------------------------------------------------------------
@@ -308,29 +345,51 @@ void executarControleBomba() {
     return;
   }
 
-  // 3. MODO MANUAL ABSOLUTO (Sobrescreve histerese e tempo máximo)
-  if (g_modoManual == 1) { // FORÇAR ON
-    if (g_estadoBomba != BOMBA_LIGADA) {
-      acionarRele(true);
-      g_inicioBombaLigadaMs = agora; // para referência
-      g_estadoBomba = BOMBA_LIGADA;
-      Serial.println("[MANUAL] Bomba LIGADA forcadamente via Dashboard!");
-    }
-    return; // Sai da função, ignora o resto
-  } 
-  else if (g_modoManual == 2) { // FORÇAR OFF
-    if (g_estadoBomba != BOMBA_DESLIGADA) {
+  // 3. CHECAGEM DE BOIA ELETRÔNICA DE FALLBACK (Prioridade Máxima Física)
+  // Se a boia acionar e o sensor ultrassônico NÃO tiver atingido o nível de desligamento
+  if (g_boiaAcionada && g_nivelPct < NIVEL_DESLIGAR_PCT) {
+    if (g_bombaRelatadaOn || g_estadoBomba != ALERTA_BOIA) {
       acionarRele(false);
       g_ultimoDesligamentoMs = agora;
-      g_estadoBomba = BOMBA_DESLIGADA;
-      Serial.println("[MANUAL] Bomba DESLIGADA forcadamente via Dashboard!");
+      g_estadoBomba = ALERTA_BOIA;
+      Serial.println(
+          "[ALERTA CRÍTICO] Boia de fallback acionada sem confirmação do ultrassônico! "
+          "Bomba DESLIGADA e TRAVADA!");
     }
-    return; // Sai da função
+    return;
   }
 
-  // 4. CHECAGEM DE SEGURANÇA DE TEMPO MÁXIMO (Proteção contra Poço Seco /
-  // Vazamento)
+  // Se estiver em estado travado (BOIA, ESTAGNADO, POCO_SECO), não liga nem mesmo em manual
+  if (g_estadoBomba == ALERTA_BOIA || g_estadoBomba == ALERTA_ESTAGNADO ||
+      g_estadoBomba == ALERTA_POCO_SECO) {
+    if (g_bombaRelatadaOn) {
+      acionarRele(false);
+      g_ultimoDesligamentoMs = agora;
+    }
+    return;
+  }
+
+  // 4. CHECAGEM DE PROTEÇÃO CONTRA NÍVEL ESTAGNADO E TEMPO MÁXIMO
   if (g_estadoBomba == BOMBA_LIGADA) {
+    // 4.1. Nível estagnado (bomba ligada por X min sem subida mínima de nível)
+    if (agora - g_ultimoCheckVariacaoMs >= (TEMPO_SEM_VARIACAO_MIN * 60000UL)) {
+      float subida = g_nivelPct - g_ultimoNivelRef;
+      if (subida < NIVEL_VARIACAO_MIN_PCT) {
+        acionarRele(false);
+        g_ultimoDesligamentoMs = agora;
+        g_estadoBomba = ALERTA_ESTAGNADO;
+        Serial.printf("[ALERTA CRÍTICO] Bomba ligada há %d min sem subida de nível "
+                      "(subiu %.1f%%, mínimo %.1f%%). Bomba DESLIGADA e TRAVADA!\n",
+                      TEMPO_SEM_VARIACAO_MIN, subida, NIVEL_VARIACAO_MIN_PCT);
+        return;
+      } else {
+        // Nível subiu normalmente: avança janela de checagem
+        g_ultimoNivelRef = g_nivelPct;
+        g_ultimoCheckVariacaoMs = agora;
+      }
+    }
+
+    // 4.2. Tempo máximo absoluto (30 min)
     unsigned long tempoExecucaoMin = (agora - g_inicioBombaLigadaMs) / 60000UL;
     if (tempoExecucaoMin >= TEMPO_MAX_BOMBA_LIGADA_MIN) {
       acionarRele(false);
@@ -342,21 +401,42 @@ void executarControleBomba() {
     }
   }
 
-  // Se esteve em estado de erro mas o sinal e sensor se restabeleceram, sai do
-  // alerta
+  // Restabelece de alertas transitórios caso sinal volte
   if (g_estadoBomba == ALERTA_OFFLINE || g_estadoBomba == ALERTA_ERRO_SENSOR) {
     g_estadoBomba = BOMBA_DESLIGADA;
   }
 
-  // 4. LÓGICA DE HISTERESE (NÍVEL MÍNIMO / MÁXIMO)
+  // 5. MODO MANUAL (Comando via Dashboard/MQTT)
+  if (g_modoManual == 1) { // FORÇAR ON
+    if (g_estadoBomba != BOMBA_LIGADA) {
+      acionarRele(true);
+      g_inicioBombaLigadaMs = agora;
+      g_ultimoNivelRef = g_nivelPct;
+      g_ultimoCheckVariacaoMs = agora;
+      g_estadoBomba = BOMBA_LIGADA;
+      Serial.println("[MANUAL] Bomba LIGADA forcadamente via Dashboard!");
+    }
+    return;
+  } 
+  else if (g_modoManual == 2) { // FORÇAR OFF
+    if (g_estadoBomba != BOMBA_DESLIGADA) {
+      acionarRele(false);
+      g_ultimoDesligamentoMs = agora;
+      g_estadoBomba = BOMBA_DESLIGADA;
+      Serial.println("[MANUAL] Bomba DESLIGADA forcadamente via Dashboard!");
+    }
+    return;
+  }
 
+  // 6. LÓGICA DE HISTERESE AUTOMÁTICA
   // A. CONDIÇÃO PARA LIGAR (Nível <= NIVEL_LIGAR_PCT)
   if (g_nivelPct <= NIVEL_LIGAR_PCT) {
     if (g_estadoBomba == BOMBA_DESLIGADA) {
-      // Verifica tempo de pausa anti-cycling para proteger o motor
       if (agora - g_ultimoDesligamentoMs >= TEMPO_MIN_PAUSA_BOMBA_MS) {
         acionarRele(true);
         g_inicioBombaLigadaMs = agora;
+        g_ultimoNivelRef = g_nivelPct;
+        g_ultimoCheckVariacaoMs = agora;
         g_estadoBomba = BOMBA_LIGADA;
         Serial.printf(
             "[AUTOMAÇÃO] Nível baixo (%.1f%% <= %.1f%%). Bomba LIGADA!\n",
@@ -368,6 +448,8 @@ void executarControleBomba() {
       if (agora - g_ultimoDesligamentoMs >= TEMPO_MIN_PAUSA_BOMBA_MS) {
         acionarRele(true);
         g_inicioBombaLigadaMs = agora;
+        g_ultimoNivelRef = g_nivelPct;
+        g_ultimoCheckVariacaoMs = agora;
         g_estadoBomba = BOMBA_LIGADA;
         Serial.println("[AUTOMAÇÃO] Fim da pausa anti-ciclo. Bomba LIGADA!");
       }
@@ -384,7 +466,9 @@ void executarControleBomba() {
           "[AUTOMAÇÃO] Nível atingido (%.1f%% >= %.1f%%). Bomba DESLIGADA!\n",
           g_nivelPct, NIVEL_DESLIGAR_PCT);
     } else if (g_estadoBomba != BOMBA_DESLIGADA &&
-               g_estadoBomba != ALERTA_POCO_SECO) {
+               g_estadoBomba != ALERTA_POCO_SECO &&
+               g_estadoBomba != ALERTA_BOIA &&
+               g_estadoBomba != ALERTA_ESTAGNADO) {
       g_estadoBomba = BOMBA_DESLIGADA;
     }
   }

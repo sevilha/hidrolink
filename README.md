@@ -12,10 +12,13 @@ O **Hidrolink** é um sistema embarcado avançado de automação para controle i
 - 🔔 **Notificações Push (Opcionais)**: Capacidade da API local disparar webhooks de saída (ex: para o ntfy.sh ou Telegram) alertando o celular sobre falhas críticas (caixa vazia, vazamento), desde que o roteador permita tráfego de saída. Em modo totalmente offline, o sistema falha o envio do webhook de forma silenciosa e continua operando a bomba normalmente.
 - ⚡ **Automação Inteligente por Histerese**: Acionamento automático da bomba quando o nível cai abaixo de 25% e desligamento em 95%.
 - 🔐 **Segurança de Ponta a Ponta**: A comunicação via rádio LoRa é fortemente criptografada com AES-128-CBC e possui validação Anti-Replay. A conexão MQTT também conta com autenticação restrita por usuário e senha.
-- 🛡️ **Tripla Proteção da Bomba (Safety Engine)**:
-  1. Proteção de Perda de Sinal (Offline): Desliga a bomba se o transmissor ficar > 45s sem enviar pacotes.
-  2. Proteção contra Poço Seco / Vazamento: Limite de tempo máximo contínuo da bomba ligada (30 min).
-  3. Proteção Anti-Cycling: Pausa mínima de 1 minuto entre acionamentos do motor para preservar a elétrica.
+- 🛡️ **Quíntupla Proteção da Bomba (Safety Engine v2)**:
+  1. **Boia Eletrônica de Fallback (Hardware Redundancy)**: Se o nível físico atingir a boia no topo e o ultrassônico não tiver detectado nível de desligamento, a bomba é desligada imediatamente e travada para evitar transbordo.
+  2. **Proteção contra Nível Estagnado**: Se a bomba for ligada e o nível não subir pelo menos 2% em 5 minutos, a bomba desliga e trava, disparando alarme sonoro (proteção contra poço seco, vazamento ou desferra).
+  3. **Proteção de Perda de Sinal (Offline)**: Desliga a bomba se o transmissor ficar > 45s sem enviar pacotes LoRa.
+  4. **Proteção de Tempo Máximo Contínuo**: Limite absoluto de 30 minutos contínuos ligado.
+  5. **Proteção Anti-Cycling**: Pausa mínima de 1 minuto entre acionamentos do motor para preservar o enrolamento elétrico.
+- 🔊 **Alarme Sonoro Local no Orange Pi**: Dispara um buzzer ativo em caso de qualquer condição crítica de travamento, com botão de silenciamento e reset pelo Dashboard.
 - 📺 **Displays OLED 0.96" Integrados**: Exibição local do volume em litros, porcentagem e diagnósticos de rádio/Wi-Fi nas placas.
 
 ---
@@ -24,9 +27,11 @@ O **Hidrolink** é um sistema embarcado avançado de automação para controle i
 
 | Item | Quantidade | Função / Localização |
 |---|---|---|
-| **Orange Pi** (Zero, 3B ou superior) | 1 unidade | Servidor Local / Edge Computing (Roda Docker, Broker MQTT, API NestJS e Banco de Dados) |
+| **Orange Pi** (Zero, 3B ou superior) | 1 unidade | Servidor Local / Edge Computing (Roda Docker, Mosquitto MQTT, Dashboard e Alarme Sonoro) |
 | Placa LILYGO TTGO LoRa32 **T3 V1.6.1** | 2 unidades | 1 Transmissor Gateway (Caixa d'água) / 1 Receptor (Casa de Máquinas/Bomba) |
 | Sensor ultrassônico waterproof **JSN-SR04T** | 1 unidade | Transmissor (Medição ultrassônica da altura da lâmina d'água) |
+| **Boia Eletrônica de Nível** (Contato seco / Boia de nível tipo chave) | 1 unidade | Transmissor (Instalada no nível de transbordo no topo da caixa d'água) |
+| **Buzzer Ativo 5V + Transistor NPN (BC547)** | 1 kit | Orange Pi (Emissão de alerta sonoro local) |
 | Módulo Relé Optoacoplado 5V ou Contatora | 1 unidade | Receptor (Acionamento elétrico de potência da bomba) |
 | Fonte 5V / 2A (USB) | 3 unidades | Alimentação individual para as duas placas ESP32 e para o Orange Pi |
 
@@ -35,15 +40,23 @@ O **Hidrolink** é um sistema embarcado avançado de automação para controle i
 ## 🔌 Esquemas de Ligação
 
 ### 1. Transmissor Gateway (Caixa D'Água)
-| JSN-SR04T | TTGO LoRa32 |
-|---|---|
-| **VCC** / **GND** | 5V / GND |
-| **TRIG** / **ECHO** | GPIO 25 / GPIO 33 |
+| Componente | Pino do Componente | TTGO LoRa32 (ESP32) |
+|---|---|---|
+| **JSN-SR04T** | VCC / GND | 5V / GND |
+| **JSN-SR04T** | TRIG / ECHO | GPIO 25 / GPIO 34 |
+| **Boia Eletrônica (Fallback)** | Fio 1 / Fio 2 | **GPIO 32** / **GND** (com Pullup interno ativado) |
 
 ### 2. Receptor (Casa / Casa de Máquinas)
 | Módulo Relé / Contatora | TTGO LoRa32 |
 |---|---|
 | **IN / Signal** | **GPIO 17** |
+
+### 3. Orange Pi (Alarme Sonoro - Buzzer Ativo)
+Consulte o guia completo com esquema esquemático em [`server/alarme/README.md`](file:///Users/viniciussevilha/Meus%20Projetos/hidrolink/server/alarme/README.md).
+- **GPIO 2 (Pino 3)** -> Resistor 1kΩ -> Base do transistor NPN (BC547)
+- **Coletor** -> Negativo do Buzzer Ativo 5V
+- **Positivo do Buzzer** -> 5V (Pino 2 ou 4)
+- **Emissor** -> GND (Pino 6)
 
 > ⚠️ **IMPORTANTE DE SEGURANÇA ELÉTRICA:** Recomendamos fortemente utilizar o pino GPIO 17 do ESP32 para acionar um módulo relé optoacoplado, que por sua vez energiza a bobina (A1/A2) de uma **Contatora AC**. Isso garante isolamento elétrico total da placa contra surtos indutivos do motor.
 

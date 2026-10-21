@@ -103,6 +103,21 @@ unsigned long lastSendTime = 0;
 // 0 = Auto, 1 = Forçar ON, 2 = Forçar OFF
 int modo_manual = 0;
 
+// RESET de alertas travados (boia / nível estagnado / timeout).
+// Fica pendente e é reenviado em todo pacote até o RX confirmar com ACK.
+bool resetPendente = false;
+
+// Boia eletrônica (estado já filtrado por debounce)
+bool boiaAcionada = false;
+bool boiaLeituraAnterior = false;
+unsigned long boiaMudancaMs = 0;
+bool forcarEnvio = false; // Envia imediatamente quando a boia muda de estado
+
+// Estado reportado pelo Receptor no ACK ("ACK,<bomba>,<alerta>")
+bool bombaLigadaRX = false;
+String alertaAtual = "OK";  // OK | BOIA | ESTAGNADO | TIMEOUT | SENSOR
+String alertaPublicado = ""; // Último alerta publicado no MQTT
+
 // Callback para mensagens recebidas do MQTT
 void mqttCallback(char *topic, byte *payload, unsigned int length) {
   String msg = "";
@@ -117,7 +132,56 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
       modo_manual = 1;
     else if (msg == "OFF")
       modo_manual = 2;
+    else if (msg == "RESET") {
+      resetPendente = true;
+      forcarEnvio = true;
+    }
     Serial.println("[MQTT] Comando recebido: " + msg);
+  }
+}
+
+// ------------------------------------------------------------
+//  Boia Eletrônica de Fallback (leitura + debounce não bloqueante)
+// ------------------------------------------------------------
+bool lerBoiaBruta() {
+#if BOIA_HABILITADA
+  int v = digitalRead(PINO_BOIA);
+  return BOIA_ACIONADA_EM_HIGH ? (v == HIGH) : (v == LOW);
+#else
+  return false;
+#endif
+}
+
+void atualizarBoia() {
+  bool leitura = lerBoiaBruta();
+  if (leitura != boiaLeituraAnterior) {
+    boiaLeituraAnterior = leitura;
+    boiaMudancaMs = millis();
+  } else if (leitura != boiaAcionada &&
+             millis() - boiaMudancaMs >= BOIA_DEBOUNCE_MS) {
+    boiaAcionada = leitura;
+    forcarEnvio = true; // Avisa o RX sem esperar o próximo ciclo de 10s
+    Serial.println(boiaAcionada ? "[BOIA] ACIONADA (nivel maximo fisico)!"
+                                : "[BOIA] Normalizada.");
+  }
+}
+
+// ------------------------------------------------------------
+//  Publicação do alerta (retido) para o alarme sonoro no Orange Pi
+// ------------------------------------------------------------
+void publicarAlertaSeMudou(float nivelPct) {
+  if (!mqttClient.connected() || alertaAtual == alertaPublicado)
+    return;
+
+  bool ativo = (alertaAtual != "OK");
+  String payload = "{\"codigo\":\"" + alertaAtual + "\",\"ativo\":" +
+                   String(ativo ? "true" : "false") +
+                   ",\"nivel\":" + String(nivelPct, 1) + ",\"boia\":" +
+                   String(boiaAcionada ? "true" : "false") + "}";
+
+  if (mqttClient.publish(MQTT_TOPIC_ALERTA, payload.c_str(), true)) {
+    alertaPublicado = alertaAtual;
+    Serial.println("[MQTT] Alerta publicado: " + payload);
   }
 }
 
@@ -224,8 +288,15 @@ void atualizarOLED(float distancia, float nivelPct, float litros,
   }
 
   display.setCursor(0, 56);
-  display.print("Pkt #");
-  display.print(contadorPacotes);
+  if (alertaAtual != "OK") {
+    display.print("ALERTA: ");
+    display.print(alertaAtual);
+  } else {
+    display.print("Pkt #");
+    display.print(contadorPacotes);
+    if (boiaAcionada)
+      display.print(" BOIA!");
+  }
 
   display.display();
 }
@@ -291,6 +362,12 @@ void setup() {
   pinMode(PINO_TRIG, OUTPUT);
   pinMode(PINO_ECHO, INPUT);
 
+#if BOIA_HABILITADA
+  pinMode(PINO_BOIA, INPUT_PULLUP);
+  boiaAcionada = boiaLeituraAnterior = lerBoiaBruta();
+  Serial.println(boiaAcionada ? "[BOIA] Iniciou ACIONADA." : "[BOIA] OK.");
+#endif
+
   // Inicialização do Display OLED
   if (OLED_RST > 0) {
     pinMode(OLED_RST, OUTPUT);
@@ -349,11 +426,14 @@ void loop() {
     mqttClient.loop();
   }
 
+  atualizarBoia();
+
   unsigned long currentMillis = millis();
 
-  if (currentMillis - lastSendTime >= INTERVALO_ENVIO_TX_MS ||
+  if (forcarEnvio || currentMillis - lastSendTime >= INTERVALO_ENVIO_TX_MS ||
       lastSendTime == 0) {
     lastSendTime = currentMillis;
+    forcarEnvio = false;
 
     float distancia = lerDistanciaCM();
     bool erroSensor =
@@ -369,15 +449,24 @@ void loop() {
       litros = (nivelPct / 100.0) * TANQUE_VOLUME_LITROS;
     }
 
+    if (boiaAcionada && (erroSensor || nivelPct < NIVEL_DESLIGAR_PCT)) {
+      Serial.printf("[BOIA] Divergencia: boia acionada com ultrassonico em "
+                    "%.1f%% (< %.1f%%)\n",
+                    nivelPct, NIVEL_DESLIGAR_PCT);
+    }
+
     float bateria = lerBateriaV();
     contadorPacotes++;
+    bool enviouReset = resetPendente;
 
     // Formato do pacote telemetry CSV:
-    // "distancia,nivel,litros,bateria,contador,erro,modo_manual"
+    // "distancia,nivel,litros,bateria,contador,erro,modo_manual,boia,reset"
     String pacote = String(distancia, 1) + "," + String(nivelPct, 1) + "," +
                     String(litros, 0) + "," + String(bateria, 2) + "," +
                     String(contadorPacotes) + "," + String(erroSensor ? 1 : 0) +
-                    "," + String(modo_manual);
+                    "," + String(modo_manual) + "," +
+                    String(boiaAcionada ? 1 : 0) + "," +
+                    String(enviouReset ? 1 : 0);
 
     // Envio via LoRa (Para o Receptor na bomba)
     String pacoteCriptografado = encryptAES(pacote);
@@ -387,7 +476,7 @@ void loop() {
     Serial.println("[TX Envio #" + String(contadorPacotes) + "]: " + pacote);
     Serial.println(" -> Criptografado: " + pacoteCriptografado);
 
-    // Espera pelo ACK
+    // Espera pelo ACK ("ACK,<bomba 0/1>,<alerta>")
     unsigned long tempoEspera = millis();
     bool loraOffline = true;
     while (millis() - tempoEspera < 2000) {
@@ -398,9 +487,17 @@ void loop() {
           msg += (char)LoRa.read();
         }
         String dec = decryptAES(msg);
-        if (dec == "ACK") {
+        if (dec.startsWith("ACK")) {
           loraOffline = false;
-          Serial.println("[TX] ACK recebido do RX com sucesso.");
+          int c1 = dec.indexOf(',');
+          int c2 = dec.indexOf(',', c1 + 1);
+          if (c1 > 0 && c2 > c1) {
+            bombaLigadaRX = dec.substring(c1 + 1, c2).toInt() == 1;
+            alertaAtual = dec.substring(c2 + 1);
+          }
+          if (enviouReset)
+            resetPendente = false; // RX processou o RESET antes de responder
+          Serial.println("[TX] ACK recebido do RX: " + dec);
           break;
         }
       }
@@ -419,7 +516,10 @@ void loop() {
                            ",\"litros\":" + String(litros, 0) +
                            ",\"bateria\":" + String(bateria, 2) + ",\"erro\":" +
                            String(erroSensor ? "true" : "false") + ",\"lora_offline\":" +
-                           String(loraOffline ? "true" : "false") + "}";
+                           String(loraOffline ? "true" : "false") +
+                           ",\"boia\":" + String(boiaAcionada ? "true" : "false") +
+                           ",\"bomba\":" + String(bombaLigadaRX ? "true" : "false") +
+                           ",\"alerta\":\"" + alertaAtual + "\"}";
 
       if (mqttClient.publish(MQTT_TOPIC_TELEMETRY, payloadMQTT.c_str())) {
         Serial.println("[MQTT] Telemetria publicada.");
@@ -427,6 +527,7 @@ void loop() {
         Serial.println("[MQTT] Falha ao publicar telemetria.");
       }
     }
+    publicarAlertaSeMudou(nivelPct);
 
     atualizarOLED(distancia, nivelPct, litros, erroSensor);
     if (loraOffline) {

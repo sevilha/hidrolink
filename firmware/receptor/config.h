@@ -30,6 +30,10 @@
      // poço seco / transbordo)
 #define TEMPO_MIN_PAUSA_BOMBA_MS                                               \
   60000UL // Pausa mínima de 1 minuto entre religamentos (anti-cycling do motor)
+#define TEMPO_SEM_VARIACAO_MIN                                                 \
+  5 // Bomba ligada por X min sem o nível subir -> desliga e trava (alerta)
+#define NIVEL_VARIACAO_MIN_PCT                                                 \
+  2.0 // Subida mínima (%) que conta como "nível mudou" (filtra ruído do sensor)
 
 // ------------------------------------------------------------
 //  4. Frequência e Comunicação LoRa (915MHz - Brasil)

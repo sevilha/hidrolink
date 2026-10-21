@@ -1,0 +1,20 @@
+[Unit]
+Description=Hidrolink - Servico de Alarme Sonoro do Orange Pi (Buzzer)
+After=network.target docker.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/hidrolink/server/alarme
+ExecStart=/usr/bin/python3 /opt/hidrolink/server/alarme/alarme_buzzer.py
+Restart=always
+RestartSec=5
+Environment=MQTT_BROKER=localhost
+Environment=MQTT_PORT=1883
+Environment=MQTT_USER=admin
+Environment=MQTT_PASS=hidrolink_mqtt_pass
+Environment=BUZZER_PIN=2
+Environment=BUZZER_ACTIVE_HIGH=true
+
+[Install]
+WantedBy=multi-user.target

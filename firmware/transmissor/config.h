@@ -35,6 +35,23 @@
      // poço seco / transbordo)
 #define TEMPO_MIN_PAUSA_BOMBA_MS                                               \
   60000UL // Pausa mínima de 1 minuto entre religamentos (anti-cycling do motor)
+#define TEMPO_SEM_VARIACAO_MIN                                                 \
+  5 // Bomba ligada por X min sem o nível subir -> desliga e trava (alerta)
+#define NIVEL_VARIACAO_MIN_PCT                                                 \
+  2.0 // Subida mínima (%) que conta como "nível mudou" (filtra ruído do sensor)
+
+// ------------------------------------------------------------
+//  3.1. Boia Eletrônica de Fallback (No Transmissor)
+// ------------------------------------------------------------
+// Instalar ACIMA da linha de NIVEL_DESLIGAR_PCT. Se ela acionar e o
+// ultrassônico não tiver atingido o nível de desligamento, a bomba é
+// desligada e travada até um RESET pelo Dashboard.
+#define BOIA_HABILITADA true // 'false' para operar sem a boia instalada
+#define PINO_BOIA 32         // Contato seco entre o pino e o GND (INPUT_PULLUP)
+#define BOIA_ACIONADA_EM_HIGH                                                  \
+  true // true = contato NF (abre com água -> HIGH). Recomendado: fio rompido
+       // também é lido como "acionada" (fail-safe). false = contato NA.
+#define BOIA_DEBOUNCE_MS 2000 // Estado precisa ficar estável por 2s (ondas)
 
 // ------------------------------------------------------------
 //  4. Frequência e Comunicação LoRa (915MHz - Brasil)
@@ -76,6 +93,7 @@
 // ------------------------------------------------------------
 
 #define MQTT_TOPIC_TELEMETRY "hidrolink/telemetria"
+#define MQTT_TOPIC_ALERTA "hidrolink/alerta" // Retido; consumido pelo alarme
 #define MQTT_CLIENT_ID "Hidrolink_Transmissor"
 #include "secrets.h"
 
